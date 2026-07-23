@@ -62,7 +62,7 @@ if choice == "إدخال البيانات":
         categories = ["موبايل", "اكسسوار", "شاشات", "أجهزة منزلية"]
         inputs = {}
         
-        # إنشاء صفوف الإدخال لكل تصنيف بشكل منظم
+        # إنشاء صفوف الإدخال لكل تصنيف
         for cat in categories:
             c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
             
@@ -82,21 +82,29 @@ if choice == "إدخال البيانات":
             inputs[cat] = {"qty": qty, "val": val, "notes": notes}
             
         st.markdown("---")
-        submit_button = st.form_submit_button(label='💾 حفظ بيانات الفرع بالكامل')
+        st.markdown("### 📢 مصروفات الإعلانات اليومية (اختياري)")
+        st.info("هذا الحقل يُسجل ميزانية الإعلانات لليوم بأكمله ولا يرتبط بفرع معين.")
+        ad_spend = st.number_input("إجمالي صرف الإعلانات لليوم (جنيه)", min_value=0.0, step=10.0)
+
+        submit_button = st.form_submit_button(label='💾 حفظ البيانات')
         
         if submit_button:
             rows_to_add = []
+            
+            # 1. إضافة المبيعات
             for cat, data in inputs.items():
-                # سيتم حفظ التصنيف فقط إذا كان العدد أو القيمة أكبر من صفر
                 if data["qty"] > 0 or data["val"] > 0:
                     rows_to_add.append([str(date_input), branch, cat, data["qty"], data["val"], data["notes"]])
             
+            # 2. إضافة مصروف الإعلانات (إذا تم كتابة رقم أكبر من صفر)
+            if ad_spend > 0:
+                rows_to_add.append([str(date_input), "المركز الرئيسي", "صرف إعلانات", 0, ad_spend, "ميزانية الإعلانات لليوم"])
+            
             if rows_to_add:
-                # إضافة كل الصفوف مرة واحدة لجوجل شيت
                 worksheet.append_rows(rows_to_add)
-                st.success(f"✅ تم حفظ بيانات فرع {branch} بنجاح!")
+                st.success("✅ تم حفظ البيانات (المبيعات والإعلانات) بنجاح!")
             else:
-                st.warning("⚠️ لم تقم بإدخال أي مبيعات للحفظ. تأكد من كتابة العدد والقيمة أولاً.")
+                st.warning("⚠️ لم تقم بإدخال أي مبيعات أو مصروفات للحفظ.")
 
 elif choice == "لوحة التحكم (Dashboard)":
     st.header("📈 تقرير المبيعات المجمع")
@@ -110,13 +118,20 @@ elif choice == "لوحة التحكم (Dashboard)":
             df['العدد'] = pd.to_numeric(df['العدد'])
             df['القيمة'] = pd.to_numeric(df['القيمة'])
             
-            total_qty = df['العدد'].sum()
-            total_val = df['القيمة'].sum()
+            # فصل بيانات المبيعات عن بيانات صرف الإعلانات
+            sales_df = df[df['التصنيف'] != 'صرف إعلانات']
+            ads_df = df[df['التصنيف'] == 'صرف إعلانات']
             
-            col1, col2, col3 = st.columns(3)
+            # حساب المؤشرات
+            total_qty = sales_df['العدد'].sum()
+            total_val = sales_df['القيمة'].sum()
+            total_ads = ads_df['القيمة'].sum()
+            
+            col1, col2, col3, col4 = st.columns(4)
             col1.metric("إجمالي القطع المباعة", f"{total_qty} قطعة")
             col2.metric("إجمالي المبيعات", f"{total_val:,.2f} جنيه")
-            col3.metric("عدد الفروع المسجلة", df['الفرع'].nunique())
+            col3.metric("إجمالي صرف الإعلانات", f"{total_ads:,.2f} جنيه")
+            col4.metric("عدد الفروع المسجلة", sales_df['الفرع'].nunique())
             
             st.markdown("---")
             
@@ -124,13 +139,13 @@ elif choice == "لوحة التحكم (Dashboard)":
             
             with chart_col1:
                 st.subheader("المبيعات حسب الفرع")
-                branch_sales = df.groupby('الفرع')['القيمة'].sum().reset_index()
+                branch_sales = sales_df.groupby('الفرع')['القيمة'].sum().reset_index()
                 fig_branch = px.bar(branch_sales, x='الفرع', y='القيمة', color='الفرع', title="إجمالي القيمة لكل فرع")
                 st.plotly_chart(fig_branch, use_container_width=True)
                 
             with chart_col2:
                 st.subheader("المبيعات حسب التصنيف")
-                cat_sales = df.groupby('التصنيف')['العدد'].sum().reset_index()
+                cat_sales = sales_df.groupby('التصنيف')['العدد'].sum().reset_index()
                 fig_cat = px.pie(cat_sales, values='العدد', names='التصنيف', title="توزيع القطع المباعة")
                 st.plotly_chart(fig_cat, use_container_width=True)
                 
