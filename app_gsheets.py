@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -20,7 +19,6 @@ st.markdown('''
 ''', unsafe_allow_html=True)
 
 # ----------------- الاتصال بجوجل شيت -----------------
-# استدعاء بيانات الاعتماد (الرقم السري) من إعدادات Streamlit
 scopes = ["https://www.googleapis.com/auth/spreadsheets"]
 try:
     skey = st.secrets["gcp_service_account"]
@@ -44,38 +42,71 @@ if choice == "إدخال البيانات":
     st.header("📝 إدخال مبيعات يومية جديدة")
     
     with st.form(key='sales_form'):
-        col1, col2 = st.columns(2)
-        
-        with col1:
+        # اختيار التاريخ والفرع في الأعلى
+        col_date, col_branch = st.columns(2)
+        with col_date:
             date_input = st.date_input("التاريخ", date.today())
+        with col_branch:
             branch = st.selectbox("الفرع", ["Shubra", "Sohag", "RS store 2", "RS store"])
-            category = st.selectbox("التصنيف", ["موبايل", "اكسسوار", "شاشات", "أجهزة منزلية"])
             
-        with col2:
-            quantity = st.number_input("العدد (صافي)", min_value=0, step=1)
-            value = st.number_input("القيمة (جنيه)", min_value=0.0, step=10.0)
-            notes = st.text_input("ملاحظات (اختياري - مثل: مرتجع 1)")
+        st.markdown("---")
+        st.markdown("### بيانات التصنيفات")
+        
+        # إنشاء عناوين للأعمدة
+        h1, h2, h3, h4 = st.columns([2, 2, 2, 3])
+        h1.markdown("**التصنيف**")
+        h2.markdown("**العدد (صافي)**")
+        h3.markdown("**القيمة (جنيه)**")
+        h4.markdown("**ملاحظات (اختياري)**")
+        
+        categories = ["موبايل", "اكسسوار", "شاشات", "أجهزة منزلية"]
+        inputs = {}
+        
+        # إنشاء صفوف الإدخال لكل تصنيف بشكل منظم
+        for cat in categories:
+            c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
             
-        submit_button = st.form_submit_button(label='💾 حفظ البيانات')
+            with c1:
+                st.write("") # لضبط المحاذاة الرأسية
+                st.markdown(f"**{cat}**")
+                
+            with c2:
+                qty = st.number_input(f"العدد", min_value=0, step=1, key=f"qty_{cat}", label_visibility="collapsed")
+                
+            with c3:
+                val = st.number_input(f"القيمة", min_value=0.0, step=10.0, key=f"val_{cat}", label_visibility="collapsed")
+                
+            with c4:
+                notes = st.text_input(f"ملاحظات", key=f"notes_{cat}", label_visibility="collapsed", placeholder="مثال: بعد مرتجع 1")
+                
+            inputs[cat] = {"qty": qty, "val": val, "notes": notes}
+            
+        st.markdown("---")
+        submit_button = st.form_submit_button(label='💾 حفظ بيانات الفرع بالكامل')
         
         if submit_button:
-            # تحويل البيانات إلى صف جديد وإرساله لجوجل شيت
-            row_data = [str(date_input), branch, category, quantity, value, notes]
-            worksheet.append_row(row_data)
-            st.success("✅ تم حفظ البيانات بنجاح في Google Sheets!")
+            rows_to_add = []
+            for cat, data in inputs.items():
+                # سيتم حفظ التصنيف فقط إذا كان العدد أو القيمة أكبر من صفر
+                if data["qty"] > 0 or data["val"] > 0:
+                    rows_to_add.append([str(date_input), branch, cat, data["qty"], data["val"], data["notes"]])
+            
+            if rows_to_add:
+                # إضافة كل الصفوف مرة واحدة لجوجل شيت
+                worksheet.append_rows(rows_to_add)
+                st.success(f"✅ تم حفظ بيانات فرع {branch} بنجاح!")
+            else:
+                st.warning("⚠️ لم تقم بإدخال أي مبيعات للحفظ. تأكد من كتابة العدد والقيمة أولاً.")
 
 elif choice == "لوحة التحكم (Dashboard)":
     st.header("📈 تقرير المبيعات المجمع")
     
-    # جلب البيانات من جوجل شيت
     data = worksheet.get_all_records()
     df = pd.DataFrame(data)
     
     if not df.empty:
-        # التأكد من أسماء الأعمدة (يجب أن تكون في أول صف في جوجل شيت)
         try:
             df['التاريخ'] = pd.to_datetime(df['التاريخ']).dt.date
-            # التأكد من أن الأرقام تقرأ بشكل صحيح
             df['العدد'] = pd.to_numeric(df['العدد'])
             df['القيمة'] = pd.to_numeric(df['القيمة'])
             
@@ -107,7 +138,7 @@ elif choice == "لوحة التحكم (Dashboard)":
             st.subheader("📋 سجل البيانات التفصيلي")
             st.dataframe(df, use_container_width=True)
         except Exception as e:
-            st.warning("البيانات موجودة ولكن يبدو أن عناوين الأعمدة في جوجل شيت غير متطابقة. تأكد من أن الصف الأول يحتوي على: التاريخ | الفرع | التصنيف | العدد | القيمة | ملاحظات")
+            st.warning("البيانات موجودة ولكن يبدو أن عناوين الأعمدة في جوجل شيت غير متطابقة.")
             
     else:
-        st.info("لا توجد بيانات مسجلة حتى الآن. يرجى إدخال البيانات من الشاشة الأخرى.")
+        st.info("لا توجد بيانات مسجلة حتى الآن.")
