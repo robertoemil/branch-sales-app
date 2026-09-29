@@ -104,7 +104,7 @@ if choice == "إدخال البيانات":
 elif choice == "لوحة التحكم والتحليلات":
     st.header("📈 تقارير وتحليل المبيعات")
     
-    data = worksheet.get_all_records()
+    data = worksheet.get_all_records(expected_headers=["التاريخ", "الفرع", "التصنيف", "العدد", "القيمة", "الملاحظات"])
     df = pd.DataFrame(data)
     
     if not df.empty:
