@@ -4,3 +4,4 @@ plotly
 gspread
 google-auth
 matplotlib
+scikit-learn
