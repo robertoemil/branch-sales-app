@@ -104,9 +104,8 @@ if choice == "إدخال البيانات":
 elif choice == "لوحة التحكم والتحليلات":
     st.header("📈 تقارير وتحليل المبيعات")
     
-    # ----------------- الحل الجذري لمشكلة قراءة العناوين -----------------
+    # ----------------- قراءة البيانات بشكل آمن -----------------
     try:
-        # بنستخدم get_all_values بتجيب الداتا كقوائم عشان نتفادى خطأ العناوين
         all_values = worksheet.get_all_values()
         
         if len(all_values) > 1:
@@ -114,10 +113,10 @@ elif choice == "لوحة التحكم والتحليلات":
             data_rows = all_values[1:]
             df = pd.DataFrame(data_rows, columns=headers)
             
-            # تنظيف مسافات العناوين لو موجودة
+            # تنظيف مسافات العناوين
             df.columns = df.columns.str.strip()
             
-            # مسح أي أعمدة وهمية/فارغة بتيجي من الشيت
+            # مسح أي أعمدة وهمية أو فارغة
             df = df.loc[:, df.columns != '']
         elif len(all_values) == 1:
             df = pd.DataFrame(columns=all_values[0])
@@ -130,10 +129,10 @@ elif choice == "لوحة التحكم والتحليلات":
 
     if not df.empty:
         try:
-            # استبعاد الصفوف اللي تاريخها فاضي
+            # استبعاد الصفوف التي لا تحتوي على تاريخ
             df = df[df['التاريخ'].notna() & (df['التاريخ'] != '')]
             
-            # حماية البيانات: تحويل الأنواع بطريقة آمنة، أي خطأ نصي هيتحول لصفر
+            # تحويل الأنواع بطريقة آمنة
             df['التاريخ'] = pd.to_datetime(df['التاريخ'], errors='coerce').dt.date
             df['العدد'] = pd.to_numeric(df['العدد'], errors='coerce').fillna(0)
             df['القيمة'] = pd.to_numeric(df['القيمة'], errors='coerce').fillna(0)
@@ -178,9 +177,9 @@ elif choice == "لوحة التحكم والتحليلات":
             st.markdown("---")
             
             # --- نظام التبويبات (Tabs) لتنظيم التحليلات ---
-            tab1, tab2, tab3 = st.tabs(["📊 ملخص الأداء", "📈 تحليل الاتجاهات (زمني)", "🏢 مقارنة وتقييم الفروع"])
+            tab1, tab2, tab3, tab4 = st.tabs(["📊 ملخص الأداء", "📈 تحليل الاتجاهات (زمني)", "🏢 مقارنة وتقييم الفروع", "🔗 تأثير الإعلانات"])
             
-            with tab1:
+            with tab1: # ملخص الأداء
                 c1, c2 = st.columns(2)
                 with c1:
                     branch_sales = sales_df.groupby('الفرع')['القيمة'].sum().reset_index().sort_values(by='القيمة', ascending=False)
@@ -197,7 +196,7 @@ elif choice == "لوحة التحكم والتحليلات":
                     else:
                         st.info("لا توجد مبيعات كافية لعرض رسم التصنيفات.")
             
-            with tab2:
+            with tab2: # تحليل الاتجاهات
                 st.markdown("### تطور المبيعات اليومية")
                 daily_sales = sales_df.groupby('التاريخ')['القيمة'].sum().reset_index()
                 if not daily_sales.empty:
@@ -211,7 +210,7 @@ elif choice == "لوحة التحكم والتحليلات":
                     fig_ads = px.bar(daily_ads, x='التاريخ', y='القيمة', title="صرف الإعلانات اليومي", color_discrete_sequence=['#ff9999'])
                     st.plotly_chart(fig_ads, use_container_width=True)
 
-            with tab3:
+            with tab3: # مقارنة الفروع
                 st.markdown("### تحليل مبيعات الفروع حسب التصنيف (القيمة بالجنيه)")
                 if not sales_df.empty:
                     pivot_val = pd.pivot_table(sales_df, values='القيمة', index='الفرع', columns='التصنيف', aggfunc='sum', fill_value=0)
@@ -224,6 +223,63 @@ elif choice == "لوحة التحكم والتحليلات":
                     st.dataframe(pivot_qty.style.format("{:,.0f}").background_gradient(cmap='Greens', subset=['إجمالي القطع']), use_container_width=True)
                 else:
                      st.info("لا توجد بيانات كافية لعرض مقارنة الفروع.")
+                     
+            with tab4: # تحليل تأثير الإعلانات (الارتباط الزمني)
+                st.markdown("### ⏱️ متى ينعكس الصرف الإعلاني على المبيعات؟ (Time Lag Analysis)")
+                st.write("يقوم هذا التقرير بحساب معامل الارتباط بين مصروفات الإعلانات والمبيعات، مع ترحيل الأيام لمعرفة بعد كم يوم يظهر التأثير الأكبر.")
+                
+                # تجميع المبيعات اليومية
+                daily_sales_total = sales_df.groupby('التاريخ')['القيمة'].sum().reset_index()
+                daily_sales_total.rename(columns={'القيمة': 'إجمالي المبيعات'}, inplace=True)
+                
+                # تجميع الإعلانات اليومية
+                daily_ads_total = ads_df.groupby('التاريخ')['القيمة'].sum().reset_index()
+                daily_ads_total.rename(columns={'القيمة': 'صرف الإعلانات'}, inplace=True)
+                
+                # دمج البيانات في جدول واحد بناءً على التاريخ
+                merged_df = pd.merge(daily_sales_total, daily_ads_total, on='التاريخ', how='outer').fillna(0)
+                merged_df = merged_df.sort_values('التاريخ')
+                
+                # التأكد من وجود بيانات كافية للتحليل (أكثر من 3 أيام)
+                if len(merged_df) > 3 and merged_df['صرف الإعلانات'].sum() > 0:
+                    max_lag = 7  # تتبع التأثير حتى 7 أيام
+                    correlations = []
+                    
+                    for lag in range(max_lag + 1):
+                        shifted_ads = merged_df['صرف الإعلانات'].shift(lag)
+                        corr = merged_df['إجمالي المبيعات'].corr(shifted_ads)
+                        
+                        lag_name = "نفس اليوم" if lag == 0 else f"بعد {lag} يوم"
+                        correlations.append({
+                            'الفترة الزمنية': lag_name, 
+                            'معامل الارتباط': corr if not pd.isna(corr) else 0
+                        })
+                        
+                    corr_df = pd.DataFrame(correlations)
+                    
+                    # استخراج أفضل فترة زمنية
+                    best_lag_idx = corr_df['معامل الارتباط'].idxmax()
+                    best_lag_row = corr_df.loc[best_lag_idx]
+                    best_day = best_lag_row['الفترة الزمنية']
+                    best_corr = best_lag_row['معامل الارتباط']
+                    
+                    if best_corr > 0.3:
+                        st.success(f"💡 **أعلى تأثير للإعلانات يظهر:** {best_day} (بمعامل ارتباط {best_corr:.2f})")
+                    else:
+                        st.warning("⚠️ لا يوجد ارتباط قوي وواضح بين الإعلانات والمبيعات في البيانات الحالية.")
+                    
+                    st.info("📌 **كيف تقرأ هذا التقرير؟** يتراوح معامل الارتباط بين -1 و 1. كلما اقترب الرقم من (1) فهذا يعني أن العلاقة طردية وقوية (زيادة الإعلانات تؤدي لزيادة المبيعات بوضوح).")
+                    
+                    # رسم بياني لمعامل الارتباط
+                    fig_corr = px.bar(corr_df, x='الفترة الزمنية', y='معامل الارتباط', 
+                                      title="قوة العلاقة بين الإعلانات والمبيعات مع مرور الأيام",
+                                      text_auto='.2f', color='معامل الارتباط', color_continuous_scale='Blues')
+                    
+                    fig_corr.update_layout(yaxis=dict(range=[-1, 1]))
+                    st.plotly_chart(fig_corr, use_container_width=True)
+                    
+                else:
+                    st.warning("البيانات الحالية غير كافية لحساب الارتباط. نحتاج لعدة أيام متتالية من المبيعات والإعلانات لظهور نتائج دقيقة.")
                 
             st.markdown("---")
             with st.expander("🔎 عرض جميع البيانات المسجلة (للمراجعة)"):
