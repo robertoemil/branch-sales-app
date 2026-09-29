@@ -104,31 +104,59 @@ if choice == "إدخال البيانات":
 elif choice == "لوحة التحكم والتحليلات":
     st.header("📈 تقارير وتحليل المبيعات")
     
-    data = worksheet.get_all_records(expected_headers=["التاريخ", "الفرع", "التصنيف", "العدد", "القيمة", "الملاحظات"])
-    df = pd.DataFrame(data)
-    
+    # ----------------- الحل الجذري لمشكلة قراءة العناوين -----------------
+    try:
+        # بنستخدم get_all_values بتجيب الداتا كقوائم عشان نتفادى خطأ العناوين
+        all_values = worksheet.get_all_values()
+        
+        if len(all_values) > 1:
+            headers = all_values[0]
+            data_rows = all_values[1:]
+            df = pd.DataFrame(data_rows, columns=headers)
+            
+            # تنظيف مسافات العناوين لو موجودة
+            df.columns = df.columns.str.strip()
+            
+            # مسح أي أعمدة وهمية/فارغة بتيجي من الشيت
+            df = df.loc[:, df.columns != '']
+        elif len(all_values) == 1:
+            df = pd.DataFrame(columns=all_values[0])
+        else:
+            df = pd.DataFrame()
+            
+    except Exception as e:
+        st.error(f"حدث خطأ أثناء جلب البيانات من الشيت: {e}")
+        df = pd.DataFrame()
+
     if not df.empty:
         try:
-            df['التاريخ'] = pd.to_datetime(df['التاريخ']).dt.date
-            df['العدد'] = pd.to_numeric(df['العدد'])
-            df['القيمة'] = pd.to_numeric(df['القيمة'])
+            # استبعاد الصفوف اللي تاريخها فاضي
+            df = df[df['التاريخ'].notna() & (df['التاريخ'] != '')]
+            
+            # حماية البيانات: تحويل الأنواع بطريقة آمنة، أي خطأ نصي هيتحول لصفر
+            df['التاريخ'] = pd.to_datetime(df['التاريخ'], errors='coerce').dt.date
+            df['العدد'] = pd.to_numeric(df['العدد'], errors='coerce').fillna(0)
+            df['القيمة'] = pd.to_numeric(df['القيمة'], errors='coerce').fillna(0)
             
             # --- فلترة البيانات ---
             st.sidebar.markdown("---")
             st.sidebar.markdown("### 📅 فلترة التقارير")
-            min_date = df['التاريخ'].min()
-            max_date = df['التاريخ'].max()
             
-            # التأكد من اختيار تاريخين
-            date_range = st.sidebar.date_input("اختر نطاق التاريخ", [min_date, max_date])
-            if len(date_range) == 2:
-                start_date, end_date = date_range
-            else:
-                start_date, end_date = min_date, max_date
+            valid_dates = df['التاريخ'].dropna()
+            if not valid_dates.empty:
+                min_date = valid_dates.min()
+                max_date = valid_dates.max()
                 
-            # تطبيق الفلتر
-            mask = (df['التاريخ'] >= start_date) & (df['التاريخ'] <= end_date)
-            filtered_df = df.loc[mask]
+                date_range = st.sidebar.date_input("اختر نطاق التاريخ", [min_date, max_date])
+                if len(date_range) == 2:
+                    start_date, end_date = date_range
+                else:
+                    start_date, end_date = min_date, max_date
+                    
+                mask = (df['التاريخ'] >= start_date) & (df['التاريخ'] <= end_date)
+                filtered_df = df.loc[mask]
+            else:
+                filtered_df = df
             
             sales_df = filtered_df[filtered_df['التصنيف'] != 'صرف إعلانات']
             ads_df = filtered_df[filtered_df['التصنيف'] == 'صرف إعلانات']
@@ -143,7 +171,7 @@ elif choice == "لوحة التحكم والتحليلات":
             
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("💰 إجمالي المبيعات", f"{total_val:,.0f} ج")
-            col2.metric("📦 إجمالي القطع", f"{total_qty}")
+            col2.metric("📦 إجمالي القطع", f"{total_qty:,.0f}")
             col3.metric("📢 صرف الإعلانات", f"{total_ads:,.0f} ج")
             col4.metric("🚀 العائد على الإعلانات", f"{roas:,.1f} ضعف" if roas > 0 else "بدون إعلانات")
             
@@ -152,46 +180,57 @@ elif choice == "لوحة التحكم والتحليلات":
             # --- نظام التبويبات (Tabs) لتنظيم التحليلات ---
             tab1, tab2, tab3 = st.tabs(["📊 ملخص الأداء", "📈 تحليل الاتجاهات (زمني)", "🏢 مقارنة وتقييم الفروع"])
             
-            with tab1: # ملخص الأداء
+            with tab1:
                 c1, c2 = st.columns(2)
                 with c1:
                     branch_sales = sales_df.groupby('الفرع')['القيمة'].sum().reset_index().sort_values(by='القيمة', ascending=False)
-                    fig_branch = px.bar(branch_sales, x='الفرع', y='القيمة', color='الفرع', title="المبيعات حسب الفرع", text_auto='.2s')
-                    st.plotly_chart(fig_branch, use_container_width=True)
+                    if not branch_sales.empty and branch_sales['القيمة'].sum() > 0:
+                        fig_branch = px.bar(branch_sales, x='الفرع', y='القيمة', color='الفرع', title="المبيعات حسب الفرع", text_auto='.2s')
+                        st.plotly_chart(fig_branch, use_container_width=True)
+                    else:
+                        st.info("لا توجد مبيعات كافية لعرض رسم الفروع.")
                 with c2:
                     cat_sales = sales_df.groupby('التصنيف')['القيمة'].sum().reset_index()
-                    fig_cat = px.pie(cat_sales, values='القيمة', names='التصنيف', title="إيرادات المبيعات حسب التصنيف", hole=0.4)
-                    st.plotly_chart(fig_cat, use_container_width=True)
+                    if not cat_sales.empty and cat_sales['القيمة'].sum() > 0:
+                        fig_cat = px.pie(cat_sales, values='القيمة', names='التصنيف', title="إيرادات المبيعات حسب التصنيف", hole=0.4)
+                        st.plotly_chart(fig_cat, use_container_width=True)
+                    else:
+                        st.info("لا توجد مبيعات كافية لعرض رسم التصنيفات.")
             
-            with tab2: # تحليل الاتجاهات
+            with tab2:
                 st.markdown("### تطور المبيعات اليومية")
                 daily_sales = sales_df.groupby('التاريخ')['القيمة'].sum().reset_index()
-                fig_trend = px.line(daily_sales, x='التاريخ', y='القيمة', markers=True, title="منحنى المبيعات الإجمالية")
-                st.plotly_chart(fig_trend, use_container_width=True)
+                if not daily_sales.empty:
+                    fig_trend = px.line(daily_sales, x='التاريخ', y='القيمة', markers=True, title="منحنى المبيعات الإجمالية")
+                    st.plotly_chart(fig_trend, use_container_width=True)
+                else:
+                    st.info("لا توجد مبيعات كافية لعرض تحليل الاتجاهات.")
                 
                 daily_ads = ads_df.groupby('التاريخ')['القيمة'].sum().reset_index()
-                if not daily_ads.empty:
+                if not daily_ads.empty and daily_ads['القيمة'].sum() > 0:
                     fig_ads = px.bar(daily_ads, x='التاريخ', y='القيمة', title="صرف الإعلانات اليومي", color_discrete_sequence=['#ff9999'])
                     st.plotly_chart(fig_ads, use_container_width=True)
 
-            with tab3: # مقارنة الفروع (Pivot Table)
+            with tab3:
                 st.markdown("### تحليل مبيعات الفروع حسب التصنيف (القيمة بالجنيه)")
-                # عمل جدول محوري (Pivot Table)
-                pivot_val = pd.pivot_table(sales_df, values='القيمة', index='الفرع', columns='التصنيف', aggfunc='sum', fill_value=0)
-                pivot_val['إجمالي الفرع'] = pivot_val.sum(axis=1)
-                st.dataframe(pivot_val.style.format("{:,.0f}").background_gradient(cmap='Blues', subset=['إجمالي الفرع']), use_container_width=True)
-                
-                st.markdown("### تحليل أعداد القطع المباعة")
-                pivot_qty = pd.pivot_table(sales_df, values='العدد', index='الفرع', columns='التصنيف', aggfunc='sum', fill_value=0)
-                pivot_qty['إجمالي القطع'] = pivot_qty.sum(axis=1)
-                st.dataframe(pivot_qty.style.format("{:,.0f}").background_gradient(cmap='Greens', subset=['إجمالي القطع']), use_container_width=True)
+                if not sales_df.empty:
+                    pivot_val = pd.pivot_table(sales_df, values='القيمة', index='الفرع', columns='التصنيف', aggfunc='sum', fill_value=0)
+                    pivot_val['إجمالي الفرع'] = pivot_val.sum(axis=1)
+                    st.dataframe(pivot_val.style.format("{:,.0f}").background_gradient(cmap='Blues', subset=['إجمالي الفرع']), use_container_width=True)
+                    
+                    st.markdown("### تحليل أعداد القطع المباعة")
+                    pivot_qty = pd.pivot_table(sales_df, values='العدد', index='الفرع', columns='التصنيف', aggfunc='sum', fill_value=0)
+                    pivot_qty['إجمالي القطع'] = pivot_qty.sum(axis=1)
+                    st.dataframe(pivot_qty.style.format("{:,.0f}").background_gradient(cmap='Greens', subset=['إجمالي القطع']), use_container_width=True)
+                else:
+                     st.info("لا توجد بيانات كافية لعرض مقارنة الفروع.")
                 
             st.markdown("---")
             with st.expander("🔎 عرض جميع البيانات المسجلة (للمراجعة)"):
                 st.dataframe(df, use_container_width=True)
 
         except Exception as e:
-            st.warning("البيانات موجودة ولكن يبدو أن هناك خطأ في قراءة بعض الأرقام أو التواريخ من الشيت.")
+            st.error(f"حدث خطأ أثناء معالجة البيانات: {e}")
             
     else:
         st.info("لا توجد بيانات مسجلة حتى الآن.")
