@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from datetime import date
 import plotly.express as px
+import plotly.graph_objects as go
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -104,7 +106,6 @@ if choice == "إدخال البيانات":
 elif choice == "لوحة التحكم والتحليلات":
     st.header("📈 تقارير وتحليل المبيعات")
     
-    # ----------------- قراءة البيانات بشكل آمن -----------------
     try:
         all_values = worksheet.get_all_values()
         
@@ -112,11 +113,7 @@ elif choice == "لوحة التحكم والتحليلات":
             headers = all_values[0]
             data_rows = all_values[1:]
             df = pd.DataFrame(data_rows, columns=headers)
-            
-            # تنظيف مسافات العناوين
             df.columns = df.columns.str.strip()
-            
-            # مسح أي أعمدة وهمية أو فارغة
             df = df.loc[:, df.columns != '']
         elif len(all_values) == 1:
             df = pd.DataFrame(columns=all_values[0])
@@ -129,11 +126,20 @@ elif choice == "لوحة التحكم والتحليلات":
 
     if not df.empty:
         try:
-            # استبعاد الصفوف التي لا تحتوي على تاريخ
-            df = df[df['التاريخ'].notna() & (df['التاريخ'] != '')]
+            # استبعاد الصفوف الفارغة وتحويل الأنواع
+            df = df[df['التاريخ'].notna() & (df['التاريخ'] != '')].copy()
+            df['التاريخ'] = pd.to_datetime(df['التاريخ'], errors='coerce')
             
-            # تحويل الأنواع بطريقة آمنة
-            df['التاريخ'] = pd.to_datetime(df['التاريخ'], errors='coerce').dt.date
+            # إضافة عمود يوم الأسبوع
+            day_mapping = {
+                'Saturday': 'السبت', 'Sunday': 'الأحد', 'Monday': 'الاثنين',
+                'Tuesday': 'الثلاثاء', 'Wednesday': 'الأربعاء', 'Thursday': 'الخميس', 'Friday': 'الجمعة'
+            }
+            df['يوم الأسبوع'] = df['التاريخ'].dt.day_name().map(day_mapping)
+            cats = ['السبت', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة']
+            df['يوم الأسبوع'] = pd.Categorical(df['يوم الأسبوع'], categories=cats, ordered=True)
+            
+            df['التاريخ_كنص'] = df['التاريخ'].dt.date
             df['العدد'] = pd.to_numeric(df['العدد'], errors='coerce').fillna(0)
             df['القيمة'] = pd.to_numeric(df['القيمة'], errors='coerce').fillna(0)
             
@@ -141,7 +147,7 @@ elif choice == "لوحة التحكم والتحليلات":
             st.sidebar.markdown("---")
             st.sidebar.markdown("### 📅 فلترة التقارير")
             
-            valid_dates = df['التاريخ'].dropna()
+            valid_dates = df['التاريخ_كنص'].dropna()
             if not valid_dates.empty:
                 min_date = valid_dates.min()
                 max_date = valid_dates.max()
@@ -152,7 +158,7 @@ elif choice == "لوحة التحكم والتحليلات":
                 else:
                     start_date, end_date = min_date, max_date
                     
-                mask = (df['التاريخ'] >= start_date) & (df['التاريخ'] <= end_date)
+                mask = (df['التاريخ_كنص'] >= start_date) & (df['التاريخ_كنص'] <= end_date)
                 filtered_df = df.loc[mask]
             else:
                 filtered_df = df
@@ -164,8 +170,6 @@ elif choice == "لوحة التحكم والتحليلات":
             total_qty = sales_df['العدد'].sum()
             total_val = sales_df['القيمة'].sum()
             total_ads = ads_df['القيمة'].sum()
-            
-            # حساب العائد على الإعلانات (ROAS)
             roas = (total_val / total_ads) if total_ads > 0 else 0
             
             col1, col2, col3, col4 = st.columns(4)
@@ -176,111 +180,123 @@ elif choice == "لوحة التحكم والتحليلات":
             
             st.markdown("---")
             
-            # --- نظام التبويبات (Tabs) لتنظيم التحليلات ---
-            tab1, tab2, tab3, tab4 = st.tabs(["📊 ملخص الأداء", "📈 تحليل الاتجاهات (زمني)", "🏢 مقارنة وتقييم الفروع", "🔗 تأثير الإعلانات"])
+            # --- نظام التبويبات (Tabs) ---
+            tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                "📊 ملخص الأداء", 
+                "📈 تحليل الاتجاهات", 
+                "🏢 مقارنة الفروع", 
+                "🔗 تأثير الإعلانات",
+                "📅 تحليل أيام الأسبوع"
+            ])
             
-            with tab1: # ملخص الأداء
+            with tab1:
                 c1, c2 = st.columns(2)
                 with c1:
                     branch_sales = sales_df.groupby('الفرع')['القيمة'].sum().reset_index().sort_values(by='القيمة', ascending=False)
                     if not branch_sales.empty and branch_sales['القيمة'].sum() > 0:
                         fig_branch = px.bar(branch_sales, x='الفرع', y='القيمة', color='الفرع', title="المبيعات حسب الفرع", text_auto='.2s')
                         st.plotly_chart(fig_branch, use_container_width=True)
-                    else:
-                        st.info("لا توجد مبيعات كافية لعرض رسم الفروع.")
                 with c2:
                     cat_sales = sales_df.groupby('التصنيف')['القيمة'].sum().reset_index()
                     if not cat_sales.empty and cat_sales['القيمة'].sum() > 0:
                         fig_cat = px.pie(cat_sales, values='القيمة', names='التصنيف', title="إيرادات المبيعات حسب التصنيف", hole=0.4)
                         st.plotly_chart(fig_cat, use_container_width=True)
-                    else:
-                        st.info("لا توجد مبيعات كافية لعرض رسم التصنيفات.")
             
-            with tab2: # تحليل الاتجاهات
+            with tab2:
                 st.markdown("### تطور المبيعات اليومية")
-                daily_sales = sales_df.groupby('التاريخ')['القيمة'].sum().reset_index()
+                daily_sales = sales_df.groupby('التاريخ_كنص')['القيمة'].sum().reset_index()
                 if not daily_sales.empty:
-                    fig_trend = px.line(daily_sales, x='التاريخ', y='القيمة', markers=True, title="منحنى المبيعات الإجمالية")
+                    fig_trend = px.line(daily_sales, x='التاريخ_كنص', y='القيمة', markers=True, title="منحنى المبيعات الإجمالية")
                     st.plotly_chart(fig_trend, use_container_width=True)
-                else:
-                    st.info("لا توجد مبيعات كافية لعرض تحليل الاتجاهات.")
                 
-                daily_ads = ads_df.groupby('التاريخ')['القيمة'].sum().reset_index()
+                daily_ads = ads_df.groupby('التاريخ_كنص')['القيمة'].sum().reset_index()
                 if not daily_ads.empty and daily_ads['القيمة'].sum() > 0:
-                    fig_ads = px.bar(daily_ads, x='التاريخ', y='القيمة', title="صرف الإعلانات اليومي", color_discrete_sequence=['#ff9999'])
+                    fig_ads = px.bar(daily_ads, x='التاريخ_كنص', y='القيمة', title="صرف الإعلانات اليومي", color_discrete_sequence=['#ff9999'])
                     st.plotly_chart(fig_ads, use_container_width=True)
 
-            with tab3: # مقارنة الفروع
+            with tab3:
                 st.markdown("### تحليل مبيعات الفروع حسب التصنيف (القيمة بالجنيه)")
                 if not sales_df.empty:
                     pivot_val = pd.pivot_table(sales_df, values='القيمة', index='الفرع', columns='التصنيف', aggfunc='sum', fill_value=0)
                     pivot_val['إجمالي الفرع'] = pivot_val.sum(axis=1)
-                    st.dataframe(pivot_val.style.format("{:,.0f}").background_gradient(cmap='Blues', subset=['إجمالي الفرع']), use_container_width=True)
+                    st.dataframe(pivot_val.style.format("{:,.0f}"), use_container_width=True)
                     
                     st.markdown("### تحليل أعداد القطع المباعة")
                     pivot_qty = pd.pivot_table(sales_df, values='العدد', index='الفرع', columns='التصنيف', aggfunc='sum', fill_value=0)
                     pivot_qty['إجمالي القطع'] = pivot_qty.sum(axis=1)
-                    st.dataframe(pivot_qty.style.format("{:,.0f}").background_gradient(cmap='Greens', subset=['إجمالي القطع']), use_container_width=True)
-                else:
-                     st.info("لا توجد بيانات كافية لعرض مقارنة الفروع.")
+                    st.dataframe(pivot_qty.style.format("{:,.0f}"), use_container_width=True)
                      
-            with tab4: # تحليل تأثير الإعلانات (الارتباط الزمني)
+            with tab4:
                 st.markdown("### ⏱️ متى ينعكس الصرف الإعلاني على المبيعات؟ (Time Lag Analysis)")
-                st.write("يقوم هذا التقرير بحساب معامل الارتباط بين مصروفات الإعلانات والمبيعات، مع ترحيل الأيام لمعرفة بعد كم يوم يظهر التأثير الأكبر.")
                 
-                # تجميع المبيعات اليومية
-                daily_sales_total = sales_df.groupby('التاريخ')['القيمة'].sum().reset_index()
-                daily_sales_total.rename(columns={'القيمة': 'إجمالي المبيعات'}, inplace=True)
+                daily_sales_total = sales_df.groupby('التاريخ_كنص')['القيمة'].sum().reset_index().rename(columns={'القيمة': 'إجمالي المبيعات'})
+                daily_ads_total = ads_df.groupby('التاريخ_كنص')['القيمة'].sum().reset_index().rename(columns={'القيمة': 'صرف الإعلانات'})
+                merged_df = pd.merge(daily_sales_total, daily_ads_total, on='التاريخ_كنص', how='outer').fillna(0).sort_values('التاريخ_كنص')
                 
-                # تجميع الإعلانات اليومية
-                daily_ads_total = ads_df.groupby('التاريخ')['القيمة'].sum().reset_index()
-                daily_ads_total.rename(columns={'القيمة': 'صرف الإعلانات'}, inplace=True)
-                
-                # دمج البيانات في جدول واحد بناءً على التاريخ
-                merged_df = pd.merge(daily_sales_total, daily_ads_total, on='التاريخ', how='outer').fillna(0)
-                merged_df = merged_df.sort_values('التاريخ')
-                
-                # التأكد من وجود بيانات كافية للتحليل (أكثر من 3 أيام)
                 if len(merged_df) > 3 and merged_df['صرف الإعلانات'].sum() > 0:
-                    max_lag = 7  # تتبع التأثير حتى 7 أيام
+                    max_lag = 7
                     correlations = []
                     
                     for lag in range(max_lag + 1):
                         shifted_ads = merged_df['صرف الإعلانات'].shift(lag)
                         corr = merged_df['إجمالي المبيعات'].corr(shifted_ads)
-                        
-                        lag_name = "نفس اليوم" if lag == 0 else f"بعد {lag} يوم"
                         correlations.append({
-                            'الفترة الزمنية': lag_name, 
+                            'الفترة الزمنية': "نفس اليوم" if lag == 0 else f"بعد {lag} يوم", 
                             'معامل الارتباط': corr if not pd.isna(corr) else 0
                         })
                         
                     corr_df = pd.DataFrame(correlations)
+                    best_lag_row = corr_df.loc[corr_df['معامل الارتباط'].idxmax()]
                     
-                    # استخراج أفضل فترة زمنية
-                    best_lag_idx = corr_df['معامل الارتباط'].idxmax()
-                    best_lag_row = corr_df.loc[best_lag_idx]
-                    best_day = best_lag_row['الفترة الزمنية']
-                    best_corr = best_lag_row['معامل الارتباط']
-                    
-                    if best_corr > 0.3:
-                        st.success(f"💡 **أعلى تأثير للإعلانات يظهر:** {best_day} (بمعامل ارتباط {best_corr:.2f})")
+                    if best_lag_row['معامل الارتباط'] > 0.3:
+                        st.success(f"💡 **أعلى تأثير للإعلانات يظهر:** {best_lag_row['الفترة الزمنية']} (بمعامل ارتباط {best_lag_row['معامل الارتباط']:.2f})")
                     else:
-                        st.warning("⚠️ لا يوجد ارتباط قوي وواضح بين الإعلانات والمبيعات في البيانات الحالية.")
+                        st.warning("⚠️ لا يوجد ارتباط قوي بين الإعلانات والمبيعات في البيانات الحالية.")
                     
-                    st.info("📌 **كيف تقرأ هذا التقرير؟** يتراوح معامل الارتباط بين -1 و 1. كلما اقترب الرقم من (1) فهذا يعني أن العلاقة طردية وقوية (زيادة الإعلانات تؤدي لزيادة المبيعات بوضوح).")
-                    
-                    # رسم بياني لمعامل الارتباط
-                    fig_corr = px.bar(corr_df, x='الفترة الزمنية', y='معامل الارتباط', 
-                                      title="قوة العلاقة بين الإعلانات والمبيعات مع مرور الأيام",
-                                      text_auto='.2f', color='معامل الارتباط', color_continuous_scale='Blues')
-                    
+                    fig_corr = px.bar(corr_df, x='الفترة الزمنية', y='معامل الارتباط', title="قوة العلاقة بين الإعلانات والمبيعات مع مرور الأيام", text_auto='.2f')
                     fig_corr.update_layout(yaxis=dict(range=[-1, 1]))
                     st.plotly_chart(fig_corr, use_container_width=True)
-                    
                 else:
-                    st.warning("البيانات الحالية غير كافية لحساب الارتباط. نحتاج لعدة أيام متتالية من المبيعات والإعلانات لظهور نتائج دقيقة.")
+                    st.warning("نحتاج لعدة أيام متتالية من المبيعات والإعلانات لظهور نتائج الارتباط.")
+
+            with tab5:
+                st.markdown("### 📅 أداء الإعلانات والمبيعات حسب أيام الأسبوع")
                 
+                # تجميع البيانات حسب أيام الأسبوع
+                dow_sales = sales_df.groupby('يوم الأسبوع', observed=False)['القيمة'].sum().reset_index().rename(columns={'القيمة': 'إجمالي المبيعات'})
+                dow_ads = ads_df.groupby('يوم الأسبوع', observed=False)['القيمة'].sum().reset_index().rename(columns={'القيمة': 'صرف الإعلانات'})
+                
+                # دمج الجدولين
+                dow_merged = pd.merge(dow_sales, dow_ads, on='يوم الأسبوع', how='left').fillna(0)
+                
+                # حساب العائد على الإعلان (ROAS) لكل يوم
+                dow_merged['العائد (ROAS)'] = np.where(dow_merged['صرف الإعلانات'] > 0, dow_merged['إجمالي المبيعات'] / dow_merged['صرف الإعلانات'], 0)
+                
+                if not dow_merged.empty and dow_merged['صرف الإعلانات'].sum() > 0:
+                    c1, c2 = st.columns(2)
+                    
+                    with c1:
+                        # رسم بياني مجمع للمبيعات والإعلانات
+                        fig_dow_bar = go.Figure()
+                        fig_dow_bar.add_trace(go.Bar(x=dow_merged['يوم الأسبوع'], y=dow_merged['إجمالي المبيعات'], name='المبيعات', marker_color='#1f77b4'))
+                        fig_dow_bar.add_trace(go.Bar(x=dow_merged['يوم الأسبوع'], y=dow_merged['صرف الإعلانات'], name='الإعلانات', marker_color='#ff9999'))
+                        fig_dow_bar.update_layout(title='المبيعات مقابل الإعلانات خلال أيام الأسبوع', barmode='group')
+                        st.plotly_chart(fig_dow_bar, use_container_width=True)
+                        
+                    with c2:
+                        # رسم بياني للعائد على الإعلان ROAS
+                        fig_roas = px.line(dow_merged, x='يوم الأسبوع', y='العائد (ROAS)', markers=True, 
+                                           title='كفاءة الإعلان (ROAS) حسب اليوم', text='العائد (ROAS)')
+                        fig_roas.update_traces(textposition="top center", texttemplate='%{text:.1f}x')
+                        st.plotly_chart(fig_roas, use_container_width=True)
+                        
+                    # إظهار أفضل يوم للإعلانات
+                    best_roas_day = dow_merged.loc[dow_merged['العائد (ROAS)'].idxmax()]
+                    if best_roas_day['العائد (ROAS)'] > 0:
+                        st.success(f"🔥 **أفضل يوم لكفاءة الإعلانات هو ( {best_roas_day['يوم الأسبوع']} )** بيحقق عائد {best_roas_day['العائد (ROAS)']:.1f} ضعف اللي بتصرفه.")
+                else:
+                    st.info("لا توجد بيانات إعلانات كافية لتحليل أيام الأسبوع.")
+
             st.markdown("---")
             with st.expander("🔎 عرض جميع البيانات المسجلة (للمراجعة)"):
                 st.dataframe(df, use_container_width=True)
