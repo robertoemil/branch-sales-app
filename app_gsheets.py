@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import date
+from datetime import date, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 import gspread
 from google.oauth2.service_account import Credentials
+from sklearn.linear_model import LinearRegression
 
 # ----------------- إعدادات الصفحة -----------------
 st.set_page_config(page_title="نظام مبيعات الفروع", layout="wide")
@@ -181,12 +182,13 @@ elif choice == "لوحة التحكم والتحليلات":
             st.markdown("---")
             
             # --- نظام التبويبات (Tabs) ---
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
                 "📊 ملخص الأداء", 
                 "📈 تحليل الاتجاهات", 
                 "🏢 مقارنة الفروع", 
                 "🔗 تأثير الإعلانات",
-                "📅 تحليل أيام الأسبوع"
+                "📅 تحليل أيام الأسبوع",
+                "🔮 التنبؤ بالمبيعات"
             ])
             
             with tab1:
@@ -227,7 +229,7 @@ elif choice == "لوحة التحكم والتحليلات":
                     st.dataframe(pivot_qty.style.format("{:,.0f}"), use_container_width=True)
                      
             with tab4:
-                st.markdown("### ⏱️ متى ينعكس الصرف الإعلاني على المبيعات؟ (Time Lag Analysis)")
+                st.markdown("### ⏱️ متى ينعكس الصرف الإعلاني على المبيعات؟")
                 
                 daily_sales_total = sales_df.groupby('التاريخ_كنص')['القيمة'].sum().reset_index().rename(columns={'القيمة': 'إجمالي المبيعات'})
                 daily_ads_total = ads_df.groupby('التاريخ_كنص')['القيمة'].sum().reset_index().rename(columns={'القيمة': 'صرف الإعلانات'})
@@ -253,7 +255,7 @@ elif choice == "لوحة التحكم والتحليلات":
                     else:
                         st.warning("⚠️ لا يوجد ارتباط قوي بين الإعلانات والمبيعات في البيانات الحالية.")
                     
-                    fig_corr = px.bar(corr_df, x='الفترة الزمنية', y='معامل الارتباط', title="قوة العلاقة بين الإعلانات والمبيعات مع مرور الأيام", text_auto='.2f')
+                    fig_corr = px.bar(corr_df, x='الفترة الزمنية', y='معامل الارتباط', title="قوة العلاقة", text_auto='.2f')
                     fig_corr.update_layout(yaxis=dict(range=[-1, 1]))
                     st.plotly_chart(fig_corr, use_container_width=True)
                 else:
@@ -262,40 +264,78 @@ elif choice == "لوحة التحكم والتحليلات":
             with tab5:
                 st.markdown("### 📅 أداء الإعلانات والمبيعات حسب أيام الأسبوع")
                 
-                # تجميع البيانات حسب أيام الأسبوع
                 dow_sales = sales_df.groupby('يوم الأسبوع', observed=False)['القيمة'].sum().reset_index().rename(columns={'القيمة': 'إجمالي المبيعات'})
                 dow_ads = ads_df.groupby('يوم الأسبوع', observed=False)['القيمة'].sum().reset_index().rename(columns={'القيمة': 'صرف الإعلانات'})
-                
-                # دمج الجدولين
                 dow_merged = pd.merge(dow_sales, dow_ads, on='يوم الأسبوع', how='left').fillna(0)
-                
-                # حساب العائد على الإعلان (ROAS) لكل يوم
                 dow_merged['العائد (ROAS)'] = np.where(dow_merged['صرف الإعلانات'] > 0, dow_merged['إجمالي المبيعات'] / dow_merged['صرف الإعلانات'], 0)
                 
                 if not dow_merged.empty and dow_merged['صرف الإعلانات'].sum() > 0:
                     c1, c2 = st.columns(2)
-                    
                     with c1:
-                        # رسم بياني مجمع للمبيعات والإعلانات
                         fig_dow_bar = go.Figure()
                         fig_dow_bar.add_trace(go.Bar(x=dow_merged['يوم الأسبوع'], y=dow_merged['إجمالي المبيعات'], name='المبيعات', marker_color='#1f77b4'))
                         fig_dow_bar.add_trace(go.Bar(x=dow_merged['يوم الأسبوع'], y=dow_merged['صرف الإعلانات'], name='الإعلانات', marker_color='#ff9999'))
-                        fig_dow_bar.update_layout(title='المبيعات مقابل الإعلانات خلال أيام الأسبوع', barmode='group')
+                        fig_dow_bar.update_layout(title='المبيعات مقابل الإعلانات', barmode='group')
                         st.plotly_chart(fig_dow_bar, use_container_width=True)
-                        
                     with c2:
-                        # رسم بياني للعائد على الإعلان ROAS
-                        fig_roas = px.line(dow_merged, x='يوم الأسبوع', y='العائد (ROAS)', markers=True, 
-                                           title='كفاءة الإعلان (ROAS) حسب اليوم', text='العائد (ROAS)')
+                        fig_roas = px.line(dow_merged, x='يوم الأسبوع', y='العائد (ROAS)', markers=True, title='كفاءة الإعلان (ROAS)', text='العائد (ROAS)')
                         fig_roas.update_traces(textposition="top center", texttemplate='%{text:.1f}x')
                         st.plotly_chart(fig_roas, use_container_width=True)
                         
-                    # إظهار أفضل يوم للإعلانات
                     best_roas_day = dow_merged.loc[dow_merged['العائد (ROAS)'].idxmax()]
                     if best_roas_day['العائد (ROAS)'] > 0:
                         st.success(f"🔥 **أفضل يوم لكفاءة الإعلانات هو ( {best_roas_day['يوم الأسبوع']} )** بيحقق عائد {best_roas_day['العائد (ROAS)']:.1f} ضعف اللي بتصرفه.")
                 else:
                     st.info("لا توجد بيانات إعلانات كافية لتحليل أيام الأسبوع.")
+
+            with tab6:
+                st.markdown("### 🔮 التنبؤ بالمبيعات للأيام القادمة (AI)")
+                st.write("يقوم هذا النموذج بتحليل نمط المبيعات السابقة للتنبؤ بمبيعات الـ 7 أيام القادمة.")
+                
+                daily_pred_sales = sales_df.groupby('التاريخ_كنص')['القيمة'].sum().reset_index()
+                daily_pred_sales['التاريخ_كنص'] = pd.to_datetime(daily_pred_sales['التاريخ_كنص'])
+                daily_pred_sales = daily_pred_sales.sort_values('التاريخ_كنص')
+                
+                if len(daily_pred_sales) >= 5:
+                    # تجهيز البيانات للنموذج
+                    min_date_val = daily_pred_sales['التاريخ_كنص'].min()
+                    daily_pred_sales['Days'] = (daily_pred_sales['التاريخ_كنص'] - min_date_val).dt.days
+                    
+                    X = daily_pred_sales[['Days']]
+                    y = daily_pred_sales['القيمة']
+                    
+                    # تدريب النموذج
+                    model = LinearRegression()
+                    model.fit(X, y)
+                    
+                    # التنبؤ بـ 7 أيام قادمة
+                    last_date_val = daily_pred_sales['التاريخ_كنص'].max()
+                    future_dates = [last_date_val + timedelta(days=i) for i in range(1, 8)]
+                    future_days = [(d - min_date_val).days for d in future_dates]
+                    
+                    future_X = pd.DataFrame({'Days': future_days})
+                    predictions = model.predict(future_X)
+                    predictions = [max(0, p) for p in predictions] # منع الأرقام السلبية
+                    
+                    future_df = pd.DataFrame({
+                        'التاريخ': future_dates,
+                        'المبيعات المتوقعة': predictions
+                    })
+                    
+                    # الرسم البياني
+                    fig_pred = go.Figure()
+                    fig_pred.add_trace(go.Scatter(x=daily_pred_sales['التاريخ_كنص'], y=daily_pred_sales['القيمة'], mode='lines+markers', name='المبيعات الفعلية', line=dict(color='#1f77b4')))
+                    fig_pred.add_trace(go.Scatter(x=future_df['التاريخ'], y=future_df['المبيعات المتوقعة'], mode='lines+markers', name='المتوقعة (ذكاء اصطناعي)', line=dict(color='#ff7f0e', dash='dash')))
+                    fig_pred.update_layout(title='التوقع المستقبلي لحركة المبيعات بناءً على البيانات التاريخية', xaxis_title='التاريخ', yaxis_title='القيمة (جنيه)')
+                    
+                    st.plotly_chart(fig_pred, use_container_width=True)
+                    
+                    # عرض الجدول
+                    future_df['التاريخ'] = future_df['التاريخ'].dt.strftime('%Y-%m-%d')
+                    st.dataframe(future_df.style.format({'المبيعات المتوقعة': "{:,.0f} ج"}), use_container_width=True)
+                    
+                else:
+                    st.warning("⚠️ نحتاج إلى بيانات مبيعات فعلية مسجلة لـ 5 أيام على الأقل لكي يتمكن النموذج من رسم التوقعات المستقبلية بدقة.")
 
             st.markdown("---")
             with st.expander("🔎 عرض جميع البيانات المسجلة (للمراجعة)"):
