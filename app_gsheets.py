@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import date, timedelta
+import re
 import plotly.express as px
 import plotly.graph_objects as go
 import gspread
@@ -42,67 +43,126 @@ menu = ["إدخال البيانات", "لوحة التحكم والتحليلا
 choice = st.sidebar.radio("اختر الشاشة:", menu)
 
 if choice == "إدخال البيانات":
-    st.header("📝 إدخال مبيعات يومية جديدة")
+    st.header("📝 إدخال المبيعات اليومية")
     
-    with st.form(key='sales_form'):
-        col_date, col_branch = st.columns(2)
-        with col_date:
-            date_input = st.date_input("التاريخ", date.today())
-        with col_branch:
-            branch = st.selectbox("الفرع", ["Shubra", "Sohag", "RS store 2", "RS store"])
-            
-        st.markdown("---")
-        st.markdown("### بيانات التصنيفات")
+    tab_smart, tab_manual = st.tabs(["🚀 إدخال سريع (لصق الرسالة)", "✍️ إدخال يدوي"])
+    
+    # ----------------- 1. الإدخال السريع -----------------
+    with tab_smart:
+        st.markdown("### 📋 انسخ والصق رسالة الواتساب هنا")
+        st.info("السيستم سيقرأ الرسالة تلقائياً ويستخرج منها التاريخ، الفروع، والمبيعات ويرحلها لقاعدة البيانات.")
         
-        h1, h2, h3, h4 = st.columns([2, 2, 2, 3])
-        h1.markdown("**التصنيف**")
-        h2.markdown("**العدد (صافي)**")
-        h3.markdown("**القيمة (جنيه)**")
-        h4.markdown("**ملاحظات (اختياري)**")
+        pasted_text = st.text_area("رسالة تقرير المبيعات:", height=300, placeholder="قم بلصق تقرير المبيعات هنا...")
         
-        categories = ["موبايل", "اكسسوار", "شاشات", "أجهزة منزلية"]
-        inputs = {}
+        st.markdown("### 📢 مصروفات الإعلانات لليوم (اختياري)")
+        smart_ad_spend = st.number_input("إجمالي صرف الإعلانات لليوم (جنيه) - للنسخ السريع", min_value=0.0, step=10.0, key="smart_ad")
         
-        for cat in categories:
-            c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
-            
-            with c1:
-                st.write("") 
-                st.markdown(f"**{cat}**")
-                
-            with c2:
-                qty = st.number_input(f"العدد", min_value=0, step=1, key=f"qty_{cat}", label_visibility="collapsed")
-                
-            with c3:
-                val = st.number_input(f"القيمة", min_value=0.0, step=10.0, key=f"val_{cat}", label_visibility="collapsed")
-                
-            with c4:
-                notes = st.text_input(f"ملاحظات", key=f"notes_{cat}", label_visibility="collapsed", placeholder="مثال: بعد مرتجع 1")
-                
-            inputs[cat] = {"qty": qty, "val": val, "notes": notes}
-            
-        st.markdown("---")
-        st.markdown("### 📢 مصروفات الإعلانات اليومية (اختياري)")
-        st.info("هذا الحقل يُسجل ميزانية الإعلانات لليوم بأكمله ولا يرتبط بفرع معين.")
-        ad_spend = st.number_input("إجمالي صرف الإعلانات لليوم (جنيه)", min_value=0.0, step=10.0)
-
-        submit_button = st.form_submit_button(label='💾 حفظ البيانات')
-        
-        if submit_button:
-            rows_to_add = []
-            
-            for cat, data in inputs.items():
-                if data["qty"] > 0 or data["val"] > 0:
-                    rows_to_add.append([str(date_input), branch, cat, data["qty"], data["val"], data["notes"]])
-            
-            if ad_spend > 0:
-                rows_to_add.append([str(date_input), "المركز الرئيسي", "صرف إعلانات", 0, ad_spend, "ميزانية الإعلانات لليوم"])
-            
-            if rows_to_add:
-                worksheet.append_rows(rows_to_add)
-                st.success("✅ تم حفظ البيانات بنجاح!")
+        if st.button("معالجة وحفظ البيانات (سريع)", type="primary"):
+            if pasted_text:
+                try:
+                    # تحويل الأرقام العربية إلى إنجليزية لسهولة المعالجة
+                    arabic_to_english = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
+                    text_clean = pasted_text.translate(arabic_to_english)
+                    
+                    # استخراج التاريخ
+                    date_match = re.search(r'يوم\s*([\d/]+|[\d-]+)', text_clean)
+                    if date_match:
+                        # تحويل التنسيق من يوم/شهر/سنة إلى سنة-شهر-يوم إذا لزم الأمر
+                        raw_date = date_match.group(1).replace('/', '-')
+                        parts = raw_date.split('-')
+                        if len(parts) == 3 and len(parts[2]) == 4: # صيغة يوم-شهر-سنة
+                            report_date = f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+                        else:
+                            report_date = raw_date
+                    else:
+                        report_date = str(date.today())
+                    
+                    # فصل النص بناءً على الفروع
+                    branches_data = re.split(r'\*\*فرع\s+(.*?)\*\*', text_clean)[1:]
+                    
+                    rows_to_add = []
+                    
+                    for i in range(0, len(branches_data), 2):
+                        branch_name = branches_data[i].strip()
+                        branch_text = branches_data[i+1]
+                        
+                        # استخراج الأصناف
+                        items = re.findall(r'-\s*(.*?):\s*(\d+)\s*قطعة\s*\|\s*([\d,.]+)\s*جنيه', branch_text)
+                        
+                        for cat, qty, val in items:
+                            qty = int(qty)
+                            val = float(val.replace(',', ''))
+                            
+                            if qty > 0 or val > 0:
+                                rows_to_add.append([report_date, branch_name, cat.strip(), qty, val, "وارد من رسالة الواتساب"])
+                    
+                    # إضافة صرف الإعلانات
+                    if smart_ad_spend > 0:
+                        rows_to_add.append([report_date, "المركز الرئيسي", "صرف إعلانات", 0, smart_ad_spend, "ميزانية الإعلانات لليوم"])
+                    
+                    # الترحيل
+                    if rows_to_add:
+                        worksheet.append_rows(rows_to_add)
+                        st.success(f"✅ تم بنجاح استخراج وحفظ {len(rows_to_add)} سجل في قاعدة البيانات!")
+                        
+                        df_preview = pd.DataFrame(rows_to_add, columns=["التاريخ", "الفرع", "التصنيف", "العدد", "القيمة", "ملاحظات"])
+                        st.dataframe(df_preview, use_container_width=True)
+                    else:
+                        st.warning("⚠️ لم أتمكن من العثور على بيانات مبيعات صالحة. تأكد من أن الرسالة مطابقة للصيغة.")
+                        
+                except Exception as e:
+                    st.error(f"حدث خطأ أثناء قراءة النص: {e}")
             else:
-                st.warning("⚠️ لم تقم بإدخال أي بيانات للحفظ.")
+                st.warning("يرجى لصق النص أولاً في المربع أعلاه.")
+
+    # ----------------- 2. الإدخال اليدوي -----------------
+    with tab_manual:
+        with st.form(key='sales_form_manual'):
+            col_date, col_branch = st.columns(2)
+            with col_date:
+                date_input = st.date_input("التاريخ", date.today())
+            with col_branch:
+                branch = st.selectbox("الفرع", ["Shubra", "Sohag", "RS store 2", "RS store"], key="manual_branch")
+                
+            st.markdown("---")
+            st.markdown("### بيانات التصنيفات")
+            
+            categories = ["موبايل", "اكسسوار", "شاشات", "أجهزة منزلية"]
+            inputs = {}
+            
+            for cat in categories:
+                c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
+                with c1:
+                    st.write("") 
+                    st.markdown(f"**{cat}**")
+                with c2:
+                    qty = st.number_input(f"العدد", min_value=0, step=1, key=f"qty_{cat}", label_visibility="collapsed")
+                with c3:
+                    val = st.number_input(f"القيمة", min_value=0.0, step=10.0, key=f"val_{cat}", label_visibility="collapsed")
+                with c4:
+                    notes = st.text_input(f"ملاحظات", key=f"notes_{cat}", label_visibility="collapsed", placeholder="ملاحظات (اختياري)")
+                inputs[cat] = {"qty": qty, "val": val, "notes": notes}
+                
+            st.markdown("---")
+            st.markdown("### 📢 مصروفات الإعلانات اليومية (اختياري)")
+            manual_ad_spend = st.number_input("إجمالي صرف الإعلانات لليوم (جنيه)", min_value=0.0, step=10.0, key="manual_ad")
+
+            submit_button_manual = st.form_submit_button(label='💾 حفظ البيانات يدوياً')
+            
+            if submit_button_manual:
+                rows_to_add = []
+                for cat, data in inputs.items():
+                    if data["qty"] > 0 or data["val"] > 0:
+                        rows_to_add.append([str(date_input), branch, cat, data["qty"], data["val"], data["notes"]])
+                
+                if manual_ad_spend > 0:
+                    rows_to_add.append([str(date_input), "المركز الرئيسي", "صرف إعلانات", 0, manual_ad_spend, "ميزانية الإعلانات لليوم"])
+                
+                if rows_to_add:
+                    worksheet.append_rows(rows_to_add)
+                    st.success("✅ تم حفظ البيانات اليدوية بنجاح!")
+                else:
+                    st.warning("⚠️ لم تقم بإدخال أي بيانات للحفظ.")
 
 elif choice == "لوحة التحكم والتحليلات":
     st.header("📈 تقارير وتحليل المبيعات")
@@ -131,7 +191,6 @@ elif choice == "لوحة التحكم والتحليلات":
             df = df[df['التاريخ'].notna() & (df['التاريخ'] != '')].copy()
             df['التاريخ'] = pd.to_datetime(df['التاريخ'], errors='coerce')
             
-            # إضافة عمود يوم الأسبوع
             day_mapping = {
                 'Saturday': 'السبت', 'Sunday': 'الأحد', 'Monday': 'الاثنين',
                 'Tuesday': 'الثلاثاء', 'Wednesday': 'الأربعاء', 'Thursday': 'الخميس', 'Friday': 'الجمعة'
@@ -230,7 +289,6 @@ elif choice == "لوحة التحكم والتحليلات":
                      
             with tab4:
                 st.markdown("### ⏱️ متى ينعكس الصرف الإعلاني على المبيعات؟")
-                
                 daily_sales_total = sales_df.groupby('التاريخ_كنص')['القيمة'].sum().reset_index().rename(columns={'القيمة': 'إجمالي المبيعات'})
                 daily_ads_total = ads_df.groupby('التاريخ_كنص')['القيمة'].sum().reset_index().rename(columns={'القيمة': 'صرف الإعلانات'})
                 merged_df = pd.merge(daily_sales_total, daily_ads_total, on='التاريخ_كنص', how='outer').fillna(0).sort_values('التاريخ_كنص')
@@ -238,7 +296,6 @@ elif choice == "لوحة التحكم والتحليلات":
                 if len(merged_df) > 3 and merged_df['صرف الإعلانات'].sum() > 0:
                     max_lag = 7
                     correlations = []
-                    
                     for lag in range(max_lag + 1):
                         shifted_ads = merged_df['صرف الإعلانات'].shift(lag)
                         corr = merged_df['إجمالي المبيعات'].corr(shifted_ads)
@@ -246,15 +303,12 @@ elif choice == "لوحة التحكم والتحليلات":
                             'الفترة الزمنية': "نفس اليوم" if lag == 0 else f"بعد {lag} يوم", 
                             'معامل الارتباط': corr if not pd.isna(corr) else 0
                         })
-                        
                     corr_df = pd.DataFrame(correlations)
                     best_lag_row = corr_df.loc[corr_df['معامل الارتباط'].idxmax()]
-                    
                     if best_lag_row['معامل الارتباط'] > 0.3:
                         st.success(f"💡 **أعلى تأثير للإعلانات يظهر:** {best_lag_row['الفترة الزمنية']} (بمعامل ارتباط {best_lag_row['معامل الارتباط']:.2f})")
                     else:
                         st.warning("⚠️ لا يوجد ارتباط قوي بين الإعلانات والمبيعات في البيانات الحالية.")
-                    
                     fig_corr = px.bar(corr_df, x='الفترة الزمنية', y='معامل الارتباط', title="قوة العلاقة", text_auto='.2f')
                     fig_corr.update_layout(yaxis=dict(range=[-1, 1]))
                     st.plotly_chart(fig_corr, use_container_width=True)
@@ -263,7 +317,6 @@ elif choice == "لوحة التحكم والتحليلات":
 
             with tab5:
                 st.markdown("### 📅 أداء الإعلانات والمبيعات حسب أيام الأسبوع")
-                
                 dow_sales = sales_df.groupby('يوم الأسبوع', observed=False)['القيمة'].sum().reset_index().rename(columns={'القيمة': 'إجمالي المبيعات'})
                 dow_ads = ads_df.groupby('يوم الأسبوع', observed=False)['القيمة'].sum().reset_index().rename(columns={'القيمة': 'صرف الإعلانات'})
                 dow_merged = pd.merge(dow_sales, dow_ads, on='يوم الأسبوع', how='left').fillna(0)
@@ -291,51 +344,42 @@ elif choice == "لوحة التحكم والتحليلات":
             with tab6:
                 st.markdown("### 🔮 التنبؤ بالمبيعات للأيام القادمة (AI)")
                 st.write("يقوم هذا النموذج بتحليل نمط المبيعات السابقة للتنبؤ بمبيعات الـ 7 أيام القادمة.")
-                
                 daily_pred_sales = sales_df.groupby('التاريخ_كنص')['القيمة'].sum().reset_index()
                 daily_pred_sales['التاريخ_كنص'] = pd.to_datetime(daily_pred_sales['التاريخ_كنص'])
                 daily_pred_sales = daily_pred_sales.sort_values('التاريخ_كنص')
                 
                 if len(daily_pred_sales) >= 5:
-                    # تجهيز البيانات للنموذج
                     min_date_val = daily_pred_sales['التاريخ_كنص'].min()
                     daily_pred_sales['Days'] = (daily_pred_sales['التاريخ_كنص'] - min_date_val).dt.days
-                    
                     X = daily_pred_sales[['Days']]
                     y = daily_pred_sales['القيمة']
                     
-                    # تدريب النموذج
                     model = LinearRegression()
                     model.fit(X, y)
                     
-                    # التنبؤ بـ 7 أيام قادمة
                     last_date_val = daily_pred_sales['التاريخ_كنص'].max()
                     future_dates = [last_date_val + timedelta(days=i) for i in range(1, 8)]
                     future_days = [(d - min_date_val).days for d in future_dates]
                     
                     future_X = pd.DataFrame({'Days': future_days})
                     predictions = model.predict(future_X)
-                    predictions = [max(0, p) for p in predictions] # منع الأرقام السلبية
+                    predictions = [max(0, p) for p in predictions] 
                     
                     future_df = pd.DataFrame({
                         'التاريخ': future_dates,
                         'المبيعات المتوقعة': predictions
                     })
                     
-                    # الرسم البياني
                     fig_pred = go.Figure()
                     fig_pred.add_trace(go.Scatter(x=daily_pred_sales['التاريخ_كنص'], y=daily_pred_sales['القيمة'], mode='lines+markers', name='المبيعات الفعلية', line=dict(color='#1f77b4')))
                     fig_pred.add_trace(go.Scatter(x=future_df['التاريخ'], y=future_df['المبيعات المتوقعة'], mode='lines+markers', name='المتوقعة (ذكاء اصطناعي)', line=dict(color='#ff7f0e', dash='dash')))
-                    fig_pred.update_layout(title='التوقع المستقبلي لحركة المبيعات بناءً على البيانات التاريخية', xaxis_title='التاريخ', yaxis_title='القيمة (جنيه)')
-                    
+                    fig_pred.update_layout(title='التوقع المستقبلي لحركة المبيعات', xaxis_title='التاريخ', yaxis_title='القيمة (جنيه)')
                     st.plotly_chart(fig_pred, use_container_width=True)
                     
-                    # عرض الجدول
                     future_df['التاريخ'] = future_df['التاريخ'].dt.strftime('%Y-%m-%d')
                     st.dataframe(future_df.style.format({'المبيعات المتوقعة': "{:,.0f} ج"}), use_container_width=True)
-                    
                 else:
-                    st.warning("⚠️ نحتاج إلى بيانات مبيعات فعلية مسجلة لـ 5 أيام على الأقل لكي يتمكن النموذج من رسم التوقعات المستقبلية بدقة.")
+                    st.warning("⚠️ نحتاج إلى بيانات مبيعات فعلية مسجلة لـ 5 أيام على الأقل لكي يتمكن النموذج من رسم التوقعات.")
 
             st.markdown("---")
             with st.expander("🔎 عرض جميع البيانات المسجلة (للمراجعة)"):
