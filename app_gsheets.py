@@ -50,7 +50,7 @@ if choice == "إدخال البيانات":
     # ----------------- 1. الإدخال السريع -----------------
     with tab_smart:
         st.markdown("### 📋 انسخ والصق رسالة الواتساب هنا")
-        st.info("السيستم سيقرأ الرسالة تلقائياً ويستخرج منها التاريخ، الفروع، والمبيعات ويرحلها لقاعدة البيانات.")
+        st.info("السيستم سيقرأ الرسالة تلقائياً ويستخرج منها التاريخ، الفروع، والمبيعات (وسيتم تجاهل الإجماليات).")
         
         pasted_text = st.text_area("رسالة تقرير المبيعات:", height=300, placeholder="قم بلصق تقرير المبيعات هنا...")
         
@@ -67,10 +67,9 @@ if choice == "إدخال البيانات":
                     # استخراج التاريخ
                     date_match = re.search(r'يوم\s*([\d/]+|[\d-]+)', text_clean)
                     if date_match:
-                        # تحويل التنسيق من يوم/شهر/سنة إلى سنة-شهر-يوم إذا لزم الأمر
                         raw_date = date_match.group(1).replace('/', '-')
                         parts = raw_date.split('-')
-                        if len(parts) == 3 and len(parts[2]) == 4: # صيغة يوم-شهر-سنة
+                        if len(parts) == 3 and len(parts[2]) == 4:
                             report_date = f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
                         else:
                             report_date = raw_date
@@ -90,11 +89,18 @@ if choice == "إدخال البيانات":
                         items = re.findall(r'-\s*(.*?):\s*(\d+)\s*قطعة\s*\|\s*([\d,.]+)\s*جنيه', branch_text)
                         
                         for cat, qty, val in items:
+                            # 🔴 هنا الكود بيتجاهل أي سطر فيه كلمة "إجمالي" أو "الإجمالي"
+                            if "إجمالي" in cat or "الإجمالي" in cat:
+                                continue
+                                
                             qty = int(qty)
                             val = float(val.replace(',', ''))
                             
+                            # تنظيف اسم التصنيف من أي نجوم ** 
+                            clean_cat = cat.replace('*', '').strip()
+                            
                             if qty > 0 or val > 0:
-                                rows_to_add.append([report_date, branch_name, cat.strip(), qty, val, "وارد من رسالة الواتساب"])
+                                rows_to_add.append([report_date, branch_name, clean_cat, qty, val, "وارد من رسالة الواتساب"])
                     
                     # إضافة صرف الإعلانات
                     if smart_ad_spend > 0:
@@ -103,7 +109,7 @@ if choice == "إدخال البيانات":
                     # الترحيل
                     if rows_to_add:
                         worksheet.append_rows(rows_to_add)
-                        st.success(f"✅ تم بنجاح استخراج وحفظ {len(rows_to_add)} سجل في قاعدة البيانات!")
+                        st.success(f"✅ تم بنجاح استخراج وحفظ {len(rows_to_add)} سجل في قاعدة البيانات (تم تجاهل الإجماليات)!")
                         
                         df_preview = pd.DataFrame(rows_to_add, columns=["التاريخ", "الفرع", "التصنيف", "العدد", "القيمة", "ملاحظات"])
                         st.dataframe(df_preview, use_container_width=True)
