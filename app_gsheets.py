@@ -89,14 +89,14 @@ if choice == "إدخال البيانات":
                         items = re.findall(r'-\s*(.*?):\s*(\d+)\s*قطعة\s*\|\s*([\d,.]+)\s*جنيه', branch_text)
                         
                         for cat, qty, val in items:
-                            # 🔴 هنا الكود بيتجاهل أي سطر فيه كلمة "إجمالي" أو "الإجمالي"
+                            # تجاهل السطور التي تحتوي على الإجمالي
                             if "إجمالي" in cat or "الإجمالي" in cat:
                                 continue
                                 
                             qty = int(qty)
                             val = float(val.replace(',', ''))
                             
-                            # تنظيف اسم التصنيف من أي نجوم ** 
+                            # تنظيف اسم التصنيف من أي نجوم **
                             clean_cat = cat.replace('*', '').strip()
                             
                             if qty > 0 or val > 0:
@@ -218,13 +218,21 @@ elif choice == "لوحة التحكم والتحليلات":
                 min_date = valid_dates.min()
                 max_date = valid_dates.max()
                 
-                date_range = st.sidebar.date_input("اختر نطاق التاريخ", [min_date, max_date])
-                if len(date_range) == 2:
-                    start_date, end_date = date_range
+                # اختيار نوع الفلترة (نطاق زمني أو يوم محدد)
+                filter_type = st.sidebar.radio("نوع الفلترة:", ["نطاق زمني", "يوم محدد"])
+                
+                if filter_type == "نطاق زمني":
+                    date_range = st.sidebar.date_input("اختر نطاق التاريخ", [min_date, max_date])
+                    if len(date_range) == 2:
+                        start_date, end_date = date_range
+                    else:
+                        start_date, end_date = date_range[0], date_range[0] 
+                        
+                    mask = (df['التاريخ_كنص'] >= start_date) & (df['التاريخ_كنص'] <= end_date)
                 else:
-                    start_date, end_date = min_date, max_date
+                    single_date = st.sidebar.date_input("اختر اليوم", max_date)
+                    mask = (df['التاريخ_كنص'] == single_date)
                     
-                mask = (df['التاريخ_كنص'] >= start_date) & (df['التاريخ_كنص'] <= end_date)
                 filtered_df = df.loc[mask]
             else:
                 filtered_df = df
